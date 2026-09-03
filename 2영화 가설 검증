@@ -1,0 +1,109 @@
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
+st.set_page_config(page_title="공포영화 흥행 비교", layout="wide")
+
+st.title("🎃 공포영화 흥행 비교: 2025년 vs 2026년")
+st.caption(
+    "kobis_movies.csv의 박스오피스 10위권 영화 가운데, 첫 번째 장르가 '공포(호러)'인 "
+    "영화들의 총 관객수를 개봉 연도별로 비교합니다."
+)
+
+DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/main/data/kobis_movies.csv"
+
+
+@st.cache_data
+def load_data():
+    df = pd.read_csv(DATA_URL)
+    df["openDt"] = pd.to_datetime(df["openDt"], format="%Y%m%d", errors="coerce")
+    df["genre_first"] = df["genre"].astype(str).str.split("|").str[0]
+    df["연도"] = df["openDt"].dt.year
+    return df
+
+
+df = load_data()
+
+horror = df[df["genre_first"] == "공포(호러)"].sort_values("openDt").copy()
+
+# 연도별로 개봉 순서를 매김 (같은 연도 안에서 몇 번째 공포영화인지)
+horror["개봉순서"] = horror.groupby("연도").cumcount() + 1
+
+years = sorted(horror["연도"].dropna().unique())
+
+st.subheader("연도 선택")
+selected_years = st.multiselect(
+    "비교할 연도를 골라 주세요",
+    options=[int(y) for y in years],
+    default=[int(y) for y in years],
+)
+
+filtered = horror[horror["연도"].isin(selected_years)]
+
+if filtered.empty:
+    st.warning("선택한 연도에 해당하는 공포영화가 없습니다.")
+    st.stop()
+
+st.divider()
+
+# ---------------------------------------------------------
+# 선 그래프: 연도별 공포영화 개봉 순서 - 총 관객수
+# ---------------------------------------------------------
+st.subheader("개봉 순서별 총 관객수")
+
+fig = px.line(
+    filtered,
+    x="개봉순서",
+    y="total_audi",
+    color="연도",
+    markers=True,
+    hover_data={"movieNm": True, "openDt": "|%Y-%m-%d", "연도": False},
+)
+fig.update_traces(
+    hovertemplate="영화명: %{customdata[0]}<br>개봉일: %{customdata[1]}<br>총 관객: %{y:,}명<extra></extra>",
+)
+fig.update_layout(
+    xaxis_title="해당 연도 안에서 몇 번째 개봉한 공포영화인지",
+    yaxis_title="총 관객수",
+    legend_title_text="연도",
+    margin=dict(t=20, b=20, l=0, r=0),
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+st.markdown(
+    "**이 그래프로 알 수 있는 것:** "
+    "연도별로 공포영화가 몇 편이나 박스오피스 10위권에 들었는지, "
+    "그리고 어느 해에 유독 큰 흥행작이 나왔는지 한눈에 비교할 수 있습니다."
+)
+
+st.divider()
+
+# ---------------------------------------------------------
+# 요약 표
+# ---------------------------------------------------------
+st.subheader("연도별 요약")
+
+summary = (
+    filtered.groupby("연도")
+    .agg(편수=("movieNm", "count"), 총관객=("total_audi", "sum"), 최고흥행작_관객=("total_audi", "max"))
+    .reset_index()
+)
+
+# 최고 흥행작 이름 붙이기
+top_movie_names = filtered.loc[filtered.groupby("연도")["total_audi"].idxmax(), ["연도", "movieNm"]]
+summary = summary.merge(top_movie_names, on="연도").rename(columns={"movieNm": "최고흥행작"})
+summary = summary[["연도", "편수", "총관객", "최고흥행작", "최고흥행작_관객"]]
+
+st.dataframe(summary, use_container_width=True, hide_index=True)
+
+if len(summary) >= 2:
+    top_year_row = summary.loc[summary["총관객"].idxmax()]
+    st.markdown(
+        f"**정리:** 선택한 연도 중 **{int(top_year_row['연도'])}년**의 공포영화 총 관객이 "
+        f"**{top_year_row['총관객']:,}명**으로 가장 많았고, 그해 최고 흥행작은 "
+        f"**'{top_year_row['최고흥행작']}'**({top_year_row['최고흥행작_관객']:,}명)입니다."
+    )
+        )
+    else:
+        st.caption("장르를 하나 이상 고르면 해당 장르들의 관객 비율을 보여줍니다.")
